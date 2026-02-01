@@ -1,11 +1,8 @@
 import os
 import json
-import time
 import xml.etree.ElementTree as ET
 import requests
-import tempfile
-import subprocess
-import re
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptNotAvailable, VideoUnplayable, NoTranscriptFound
 from groq import Groq
 
 # ─────────────────────────────────────────
@@ -80,59 +77,43 @@ def get_latest_videos(rss_url):
 
 
 # ─────────────────────────────────────────
-# DOWNLOAD AUDIO
+# GET TRANSCRIPT FROM YOUTUBE CAPTIONS
 # ─────────────────────────────────────────
-def download_audio(video_url):
+def get_transcript(video_id):
     """
-    Uses yt-dlp to download only the audio from a YouTube video.
-    Returns the path to the downloaded audio file.
+    Fetches the transcript directly from YouTube's auto-generated captions.
+    No audio download needed — fast and doesn't trigger bot detection.
     """
-    tmp_dir = tempfile.mkdtemp()
-    output_template = os.path.join(tmp_dir, "audio.%(ext)s")
-
-    command = [
-        "yt-dlp",
-        "--no-playlist",
-        "-x",                          # extract audio only
-        "--audio-format", "wav",       # Groq Whisper works best with wav
-        "--audio-quality", "0",        # best quality
-        "-o", output_template,
-        video_url
-    ]
-
-    print(f"  ⬇️  Downloading audio for: {video_url}")
-    result = subprocess.run(command, capture_output=True, text=True)
-
-    if result.returncode != 0:
-        print(f"  ❌ yt-dlp error: {result.stderr}")
-        return None
-
-    # Find the actual output file (extension may vary)
-    for file in os.listdir(tmp_dir):
-        if file.startswith("audio."):
-            return os.path.join(tmp_dir, file)
-
-    return None
-
-
-# ─────────────────────────────────────────
-# TRANSCRIBE WITH GROQ WHISPER
-# ─────────────────────────────────────────
-def transcribe_audio(audio_path):
-    """
-    Sends the audio file to Groq's Whisper endpoint and returns the transcript text.
-    """
-    client = Groq(api_key=GROQ_API_KEY)
-
-    print(f"  🎧 Transcribing audio...")
-    with open(audio_path, "rb") as audio_file:
-        transcription = client.audio.transcriptions.create(
-            file=("audio.wav", audio_file),
-            model="whisper-large-v3-turbo",
-            language="en"
+    print(f"  📝 Fetching transcript...")
+    try:
+        # Try to get English transcript first, then fall back to any available
+        transcript_list = YouTubeTranscriptApi.get_transcripts(
+            [video_id],
+            languages=["en", "en-US", "en-GB"]
         )
+        # transcript_list is a tuple: (transcripts_dict, video_id)
+        transcripts = transcript_list[0][video_id]
 
-    return transcription.text
+        # Pick the first available transcript
+        if not transcripts:
+            print("  ⚠️  No transcripts available for this video.")
+            return None
+
+        transcript_data = transcripts[0].fetch()
+
+        # Combine all transcript chunks into one plain text string
+        full_text = " ".join([chunk.text for chunk in transcript_data])
+        return full_text
+
+    except (NoTranscriptFound, TranscriptNotAvailable) as e:
+        print(f"  ⚠️  No transcript found: {e}")
+        return None
+    except VideoUnplayable as e:
+        print(f"  ⚠️  Video is unplayable: {e}")
+        return None
+    except Exception as e:
+        print(f"  ⚠️  Transcript error: {e}")
+        return None
 
 
 # ─────────────────────────────────────────
@@ -232,17 +213,6 @@ def format_telegram_caption(video):
 
 
 # ─────────────────────────────────────────
-# CLEANUP TEMP FILES
-# ─────────────────────────────────────────
-def cleanup(audio_path):
-    """Removes the temporary audio file after processing."""
-    if audio_path and os.path.exists(audio_path):
-        tmp_dir = os.path.dirname(audio_path)
-        os.remove(audio_path)
-        os.rmdir(tmp_dir)
-
-
-# ─────────────────────────────────────────
 # MAIN LOGIC
 # ─────────────────────────────────────────
 def main():
@@ -266,27 +236,19 @@ def main():
             video["channel_name"] = channel_name
             print(f"\n🆕 New video detected: {video['title']}")
 
-            audio_path = None
             try:
-                # Step 1: Download audio
-                audio_path = download_audio(video["url"])
-                if not audio_path:
-                    print("  ⚠️  Skipping — audio download failed.")
-                    seen.append(video["id"])
-                    continue
-
-                # Step 2: Transcribe
-                transcript = transcribe_audio(audio_path)
+                # Step 1: Get transcript from YouTube captions
+                transcript = get_transcript(video["id"])
                 if not transcript or len(transcript.strip()) < 50:
-                    print("  ⚠️  Skipping — transcript too short or empty.")
+                    print("  ⚠️  Skipping — transcript too short or not available.")
                     seen.append(video["id"])
                     continue
 
-                # Step 3: Summarize
+                # Step 2: Summarize
                 summary = summarize_transcript(transcript, video["title"])
                 video["summary"] = summary
 
-                # Step 4: Send Telegram message
+                # Step 3: Send Telegram message
                 caption = format_telegram_caption(video)
                 send_telegram_photo(video["thumbnail"], caption)
 
@@ -297,9 +259,6 @@ def main():
                 print(f"  ❌ Error processing video: {e}")
                 # Still mark as seen so we don't retry and get stuck
                 seen.append(video["id"])
-
-            finally:
-                cleanup(audio_path)
 
     # Save updated seen list
     save_seen_videos(seen)

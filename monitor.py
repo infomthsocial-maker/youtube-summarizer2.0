@@ -18,7 +18,7 @@ GROQ_API_KEY      = os.environ["GROQ_API_KEY"]
 # Add more RSS feeds here if you want to monitor multiple channels.
 # Format: "Friendly Name": "RSS URL"
 YOUTUBE_CHANNELS = {
-    "Tech Channel": "https://www.youtube.com/feeds/videos.rss?channel_id=UCrvchO1h6lWZAuGaa1LqX9Q"
+    "Hormozi Highlights": "https://www.youtube.com/feeds/videos.xml?channel_id=UCrvchO1h6lWZAuGaa1LqX9Q"
 }
 
 # File that stores which video IDs we've already processed

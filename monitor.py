@@ -150,8 +150,10 @@ Below is the transcript of a YouTube video titled: "{video_title}"
 Please provide a clear, concise summary that:
 - Captures the main topic and key points
 - Is written in 3-5 bullet points
+- Each bullet point starts with a relevant emoji (e.g. 💡 🔥 ⚡ 📌 🎯 🚀 💎 🛠️ 📊 ✅ etc.) chosen based on what that point is about
 - Is easy to understand without watching the video
 - Does NOT include any filler or generic statements
+- Do NOT add any extra text before or after the bullet points, just the bullet points only
 
 Transcript:
 {transcript}
@@ -213,14 +215,18 @@ def send_telegram_text(text):
 
 def format_telegram_caption(video):
     """
-    Formats the Telegram caption with title, summary, and link.
+    Formats the Telegram caption with title, summary, link, and channel hashtag.
     """
+    # Convert channel name to a hashtag (remove spaces, no special chars)
+    hashtag = "#" + video["channel_name"].replace(" ", "")
+
     caption = (
-        f"🎬 *New Video: {video['title']}*\n"
+        f"🎬 *{video['title']}*\n\n"
         f"━━━━━━━━━━━━━━━━━━━━\n\n"
         f"{video['summary']}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔗 [Watch Video]({video['url']})"
+        f"━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"🔗 [Watch Video]({video['url']})\n\n"
+        f"{hashtag}"
     )
     return caption
 
@@ -257,6 +263,7 @@ def main():
             if video["id"] in seen:
                 continue
 
+            video["channel_name"] = channel_name
             print(f"\n🆕 New video detected: {video['title']}")
 
             audio_path = None

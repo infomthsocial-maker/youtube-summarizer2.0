@@ -3,7 +3,6 @@ name: YouTube Video Monitor
 on:
   schedule:
     # Runs every 30 minutes, 24/7
-    # Cron format: minute hour day-of-month month day-of-week
     - cron: "*/30 * * * *"
 
   # Also allows you to trigger it manually from the GitHub Actions tab
@@ -24,19 +23,13 @@ jobs:
         with:
           python-version: "3.11"
 
-      # ─── Step 3: Install system tools (ffmpeg is needed by yt-dlp) ───
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg
-
-      # ─── Step 4: Install Python packages ───
+      # ─── Step 3: Install Python packages ───
       - name: Install Python dependencies
         run: |
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      # ─── Step 5: Run the monitor script ───
+      # ─── Step 4: Run the monitor script ───
       - name: Run YouTube Monitor
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -45,7 +38,7 @@ jobs:
         run: |
           python monitor.py
 
-      # ─── Step 6: Save the seen_videos.json back to the repo ───
+      # ─── Step 5: Save the seen_videos.json back to the repo ───
       # This is critical — without this, the script forgets which videos
       # it already processed and would re-send them every run.
       - name: Commit updated seen_videos.json

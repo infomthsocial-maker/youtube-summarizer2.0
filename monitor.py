@@ -2,7 +2,7 @@ import os
 import json
 import xml.etree.ElementTree as ET
 import requests
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptNotAvailable, VideoUnplayable, NoTranscriptFound
+import re
 from groq import Groq
 
 # ─────────────────────────────────────────
@@ -77,43 +77,82 @@ def get_latest_videos(rss_url):
 
 
 # ─────────────────────────────────────────
-# GET TRANSCRIPT FROM YOUTUBE CAPTIONS
+# GET TRANSCRIPT VIA YOUTUBETOTRANSCRIPT
 # ─────────────────────────────────────────
 def get_transcript(video_id):
     """
-    Fetches the transcript directly from YouTube's auto-generated captions.
-    No audio download needed — fast and doesn't trigger bot detection.
+    Fetches the transcript by scraping youtubetotranscript.com.
+    This avoids YouTube's cloud IP blocking entirely.
     """
-    print(f"  📝 Fetching transcript...")
-    try:
-        # Try to get English transcript first, then fall back to any available
-        transcript_list = YouTubeTranscriptApi.get_transcripts(
-            [video_id],
-            languages=["en", "en-US", "en-GB"]
-        )
-        # transcript_list is a tuple: (transcripts_dict, video_id)
-        transcripts = transcript_list[0][video_id]
+    print(f"  📝 Fetching transcript for video: {video_id}")
 
-        # Pick the first available transcript
-        if not transcripts:
-            print("  ⚠️  No transcripts available for this video.")
-            return None
+    url = "https://youtubetotranscript.com/"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://youtubetotranscript.com/"
+    }
 
-        transcript_data = transcripts[0].fetch()
+    # Step 1: Get the main page to grab any session cookies
+    session = requests.Session()
+    session.get(url, headers=headers)
 
-        # Combine all transcript chunks into one plain text string
-        full_text = " ".join([chunk.text for chunk in transcript_data])
-        return full_text
+    # Step 2: Submit the video URL to get the transcript
+    youtube_url = f"https://www.youtube.com/watch?v={video_id}"
+    data = {"youtube_url": youtube_url}
 
-    except (NoTranscriptFound, TranscriptNotAvailable) as e:
-        print(f"  ⚠️  No transcript found: {e}")
+    response = session.post(url, headers=headers, data=data)
+
+    if response.status_code != 200:
+        print(f"  ❌ Failed to fetch transcript: HTTP {response.status_code}")
         return None
-    except VideoUnplayable as e:
-        print(f"  ⚠️  Video is unplayable: {e}")
+
+    # Step 3: Extract the transcript text from the HTML response
+    # The transcript is inside a <div> with id="transcript_text" or similar
+    html = response.text
+
+    # Try to find transcript in common patterns
+    # Pattern 1: inside a textarea or div with specific id
+    patterns = [
+        r'<textarea[^>]*id=["\']transcript["\'][^>]*>(.*?)</textarea>',
+        r'<div[^>]*id=["\']transcript_text["\'][^>]*>(.*?)</div>',
+        r'<div[^>]*class=["\']transcript["\'][^>]*>(.*?)</div>',
+        r'<div[^>]*id=["\']output["\'][^>]*>(.*?)</div>',
+    ]
+
+    transcript_text = None
+    for pattern in patterns:
+        match = re.search(pattern, html, re.DOTALL)
+        if match:
+            transcript_text = match.group(1)
+            break
+
+    # If none of the patterns matched, try a broader approach
+    # Look for large blocks of text that look like a transcript
+    if not transcript_text:
+        # Try finding text between specific markers
+        match = re.search(r'class="[^"]*transcript[^"]*"[^>]*>(.*?)</div>', html, re.DOTALL | re.IGNORECASE)
+        if match:
+            transcript_text = match.group(1)
+
+    if not transcript_text:
+        print("  ⚠️  Could not extract transcript from response.")
+        # Save the HTML for debugging so we can see what we got back
+        with open("debug_response.html", "w") as f:
+            f.write(html)
+        print("  📄 Saved debug_response.html for inspection.")
         return None
-    except Exception as e:
-        print(f"  ⚠️  Transcript error: {e}")
+
+    # Clean up HTML tags and decode entities
+    transcript_text = re.sub(r'<[^>]+>', ' ', transcript_text)
+    transcript_text = transcript_text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&quot;', '"').replace('&#39;', "'").replace('&nbsp;', ' ')
+    transcript_text = re.sub(r'\s+', ' ', transcript_text).strip()
+
+    if len(transcript_text) < 50:
+        print("  ⚠️  Transcript is too short — video might not have captions.")
         return None
+
+    print(f"  ✅ Got transcript ({len(transcript_text)} characters)")
+    return transcript_text
 
 
 # ─────────────────────────────────────────
@@ -237,7 +276,7 @@ def main():
             print(f"\n🆕 New video detected: {video['title']}")
 
             try:
-                # Step 1: Get transcript from YouTube captions
+                # Step 1: Get transcript
                 transcript = get_transcript(video["id"])
                 if not transcript or len(transcript.strip()) < 50:
                     print("  ⚠️  Skipping — transcript too short or not available.")
